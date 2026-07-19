@@ -2,7 +2,8 @@
   "name": "interval-analytics",
   "displayName": "区间收益分析助手",
   "version": "0.1.0",
-  "private": true,
+  "license": "MIT",
+  "repository": "https://github.com/maltrehao/interval-analytics",
   "engines": {
     "node": ">=22.13.0"
   },

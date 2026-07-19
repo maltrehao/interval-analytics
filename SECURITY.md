@@ -11,6 +11,8 @@ data, or other sensitive information in the report.
 
 ## Data and credentials
 
-This project requires no private API key for its default public-data workflow.
-Do not commit `.env` files, access tokens, account data, or proprietary market
-data. The repository `.gitignore` excludes environment files by default.
+This project has no application login and requires no account, password, token,
+or private API key. All supported searches and market-data requests use public
+endpoints. Do not commit `.env` files, access tokens, account data, or
+proprietary market data. The repository `.gitignore` excludes environment files
+by default.

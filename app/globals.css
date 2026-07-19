@@ -89,9 +89,19 @@ button { cursor: pointer; }
 .search-control { display: flex; align-items: center; height: 44px; border: 1px solid #bdc6d2; border-radius: 7px; background: white; transition: border-color .15s, box-shadow .15s; }
 .search-control:focus-within { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(49, 92, 244, .1); }
 .search-icon { padding: 0 8px 0 13px; font-size: 22px; transform: rotate(-20deg); color: #344054; }
+.asset-search { position: relative; min-width: 0; height: 100%; flex: 1; }
 .search-control input { min-width: 0; flex: 1; height: 100%; border: 0; outline: 0; color: var(--ink); font-size: 15px; }
 .search-control input::placeholder { color: #98a2b3; font-size: 12px; }
 .search-control select { height: 30px; padding: 0 23px 0 8px; margin-right: 7px; border: 0; border-left: 1px solid var(--line); outline: 0; background: white; color: var(--muted); font-size: 12px; }
+.searching-indicator { position: absolute; top: 50%; right: 9px; width: 14px; height: 14px; margin-top: -7px; border: 2px solid #d8def1; border-top-color: var(--blue); border-radius: 50%; animation: spin .7s linear infinite; pointer-events: none; }
+.search-results { position: absolute; z-index: 80; top: calc(100% + 7px); left: 0; width: min(460px, 82vw); max-height: 310px; padding: 5px; overflow-y: auto; border: 1px solid #ccd3df; border-radius: 8px; background: white; box-shadow: 0 16px 38px rgba(23,32,51,.16); }
+.search-results button { width: 100%; min-height: 48px; padding: 7px 9px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 0; border-radius: 6px; color: #283246; background: transparent; text-align: left; }
+.search-results button:hover, .search-results button:focus-visible { background: var(--blue-soft); outline: 0; }
+.search-results button span { min-width: 0; display: grid; gap: 3px; }
+.search-results strong { overflow: hidden; font-size: 12px; font-weight: 650; white-space: nowrap; text-overflow: ellipsis; }
+.search-results small { color: #7a8597; font-size: 10px; }
+.search-results em { flex: 0 0 auto; padding: 3px 7px; border-radius: 4px; color: #536077; background: #f0f2f5; font-size: 10px; font-style: normal; }
+.search-results p { margin: 0; padding: 14px 10px; color: #7a8597; font-size: 11px; line-height: 1.5; }
 .recognition { width: max-content; margin-top: 9px; padding: 3px 8px; border-radius: 5px; color: var(--green); background: #edf8f3; font-size: 11px; font-weight: 600; }
 .recognition span { display: inline-grid; place-items: center; width: 14px; height: 14px; margin-right: 5px; border: 1px solid currentColor; border-radius: 50%; }
 .recognition-loading { color: #315cf4; background: #eef2ff; }
@@ -144,9 +154,10 @@ button { cursor: pointer; }
 .benchmark-rows { display: grid; gap: 8px; }
 .benchmark-row { display: grid; grid-template-columns: 26px minmax(180px, 1fr) 82px 92px 30px; gap: 7px; align-items: center; }
 .benchmark-number { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; color: #536077; background: #f0f2f5; font-size: 10px; font-weight: 650; }
-.benchmark-row > input, .benchmark-row select, .benchmark-row label { height: 36px; border: 1px solid #d3d8e0; border-radius: 6px; background: #fff; }
-.benchmark-row > input { min-width: 0; padding: 0 11px; outline: 0; color: #283246; font-size: 12px; }
-.benchmark-row > input:focus, .benchmark-row select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(49,92,244,.08); outline: 0; }
+.benchmark-row .asset-search-compact, .benchmark-row select, .benchmark-row label { height: 36px; border: 1px solid #d3d8e0; border-radius: 6px; background: #fff; }
+.benchmark-row .asset-search-compact input { width: 100%; min-width: 0; height: 100%; padding: 0 11px; border: 0; border-radius: inherit; outline: 0; color: #283246; background: transparent; font-size: 12px; }
+.benchmark-row .asset-search-compact:focus-within, .benchmark-row select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(49,92,244,.08); outline: 0; }
+.asset-search-compact .search-results { width: min(390px, 80vw); }
 .benchmark-row select { padding: 0 8px; color: #667085; font-size: 11px; }
 .benchmark-row label { display: flex; align-items: center; overflow: hidden; }
 .benchmark-row label input { width: 100%; min-width: 0; height: 100%; padding: 0 5px 0 10px; border: 0; outline: 0; color: #283246; text-align: right; }

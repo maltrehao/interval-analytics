@@ -5,12 +5,13 @@ import {
   calculate, composeBenchmark, defaultMetrics, formatMetric, metricDefinitions,
   type MetricId, type PricePoint,
 } from "./analytics";
+import { AssetSearchInput, assetDisplay, type AssetCandidate, type AssetKind } from "./asset-search";
 
-type Asset = { code: string; name: string; kind: string; kindLabel: string };
-type BenchmarkDraft = { id: string; query: string; kind: string; weight: number };
+type Asset = AssetCandidate;
+type BenchmarkDraft = { id: string; query: string; kind: AssetKind; weight: number; asset?: Asset | null };
 type BenchmarkResolved = BenchmarkDraft & { asset: Asset; source: string; series: PricePoint[] };
 
-const presets = ["沪深300", "中证A500", "中证500", "中证1000", "中债综合指数", "中证全债指数"];
+const presets = ["沪深300", "中证A500", "中证500", "中证1000", "国债指数", "企债指数"];
 const comparableMetrics: MetricId[] = ["return", "annualized", "drawdown", "volatility", "sharpe", "calmar", "sortino", "winRate"];
 
 function isoDate(date: Date) { return date.toISOString().slice(0, 10); }
@@ -109,19 +110,20 @@ export default function Home() {
   const today = useMemo(() => new Date(), []);
   const demoPrimary = useMemo(() => buildDemoSeries(1), []);
   const demoBenchmark = useMemo(() => buildDemoSeries(.58), []);
-  const [query, setQuery] = useState("022430");
-  const [kind, setKind] = useState("auto");
+  const [query, setQuery] = useState("");
+  const [kind, setKind] = useState<AssetKind>("auto");
   const [start, setStart] = useState(shiftDate(today, -12));
   const [end, setEnd] = useState(isoDate(today));
   const [selected, setSelected] = useState<MetricId[]>(defaultMetrics);
   const [showMore, setShowMore] = useState(false);
   const [riskFreeRate, setRiskFreeRate] = useState(1.5);
-  const [asset, setAsset] = useState<Asset>({ code: "022430", name: "示例标的", kind: "fund", kindLabel: "基金" });
+  const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
+  const [asset, setAsset] = useState<Asset>({ code: "DEMO", name: "等待选择标的", kind: "fund", kindLabel: "演示" });
   const [series, setSeries] = useState<PricePoint[]>(demoPrimary);
   const [benchmarkSeries, setBenchmarkSeries] = useState<PricePoint[]>(demoBenchmark);
   const [benchmarks, setBenchmarks] = useState<BenchmarkDraft[]>([
-    { id: "benchmark-1", query: "沪深300", kind: "index", weight: 80 },
-    { id: "benchmark-2", query: "中债综合指数", kind: "index", weight: 20 },
+    { id: "benchmark-1", query: "沪深300", kind: "auto", weight: 80 },
+    { id: "benchmark-2", query: "国债指数", kind: "auto", weight: 20 },
   ]);
   const [resolvedBenchmarks, setResolvedBenchmarks] = useState<BenchmarkResolved[]>([]);
   const [source, setSource] = useState("示例数据 · 点击“开始分析”获取公开行情");
@@ -140,7 +142,7 @@ export default function Home() {
   const updateBenchmark = (id: string, patch: Partial<BenchmarkDraft>) => setBenchmarks((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item));
   const addBenchmark = (queryValue = "") => {
     if (benchmarks.some((item) => item.query === queryValue) && queryValue) return;
-    setBenchmarks((items) => [...items, { id: `benchmark-${Date.now()}`, query: queryValue, kind: "index", weight: 0 }]);
+    setBenchmarks((items) => [...items, { id: `benchmark-${Date.now()}`, query: queryValue, kind: "auto", weight: 0 }]);
   };
   const chooseRange = (months: number | "ytd" | "all") => {
     if (months === "ytd") setStart(`${end.slice(0, 4)}-01-01`);
@@ -149,8 +151,15 @@ export default function Home() {
   };
   const toggleMetric = (id: MetricId) => setSelected((items) => items.includes(id) ? (items.length > 1 ? items.filter((item) => item !== id) : items) : [...items, id]);
 
-  const fetchAsset = async (target: { query: string; kind: string }) => {
+  const fetchAsset = async (target: { query: string; kind: AssetKind; asset?: Asset | null }) => {
     const params = new URLSearchParams({ query: target.query, kind: target.kind, start, end });
+    if (target.asset) {
+      params.set("code", target.asset.code);
+      params.set("name", target.asset.name);
+      params.set("resolvedKind", target.asset.kind);
+      if (target.asset.exchange) params.set("exchange", target.asset.exchange);
+      if (target.asset.secid) params.set("secid", target.asset.secid);
+    }
     const response = await fetch(`/api/market?${params.toString()}`, { cache: "no-store" });
     const json = await response.json();
     if (!response.ok) throw new Error(`${target.query}：${json.error ?? "行情获取失败"}`);
@@ -158,6 +167,9 @@ export default function Home() {
   };
 
   const runAnalysis = async () => {
+    if (!query.trim()) {
+      setError("请先搜索并选择一个基金、股票或指数"); setStatus("error"); return;
+    }
     const activeBenchmarks = benchmarks.filter((item) => item.query.trim() && item.weight > 0);
     if (activeBenchmarks.length && Math.abs(totalWeight - 100) > .01) {
       setError(`基准权重合计为${totalWeight.toFixed(1)}%，请调整至100%`); setStatus("error"); return;
@@ -165,7 +177,7 @@ export default function Home() {
     setStatus("loading"); setError("");
     try {
       const [primaryResult, ...benchmarkResults] = await Promise.all([
-        fetchAsset({ query, kind }),
+        fetchAsset({ query, kind, asset: selectedAsset }),
         ...activeBenchmarks.map((item) => fetchAsset(item)),
       ]);
       const resolved = benchmarkResults.map((result, index) => ({ ...activeBenchmarks[index], ...result }));
@@ -174,6 +186,8 @@ export default function Home() {
         : { primary: primaryResult.series, benchmark: [] as PricePoint[] };
       if (composed.primary.length < 2) throw new Error("标的与基准缺少足够的共同交易日期");
       setAsset(primaryResult.asset);
+      setSelectedAsset(primaryResult.asset);
+      setQuery(assetDisplay(primaryResult.asset));
       setSeries(composed.primary);
       setBenchmarkSeries(composed.benchmark);
       setResolvedBenchmarks(resolved);
@@ -250,9 +264,17 @@ export default function Home() {
 
     <section className="analysis-panel" aria-label="分析条件">
       <div className="control-column asset-column">
-        <label className="field-label" htmlFor="asset-input">分析标的</label>
-        <div className="search-control"><span className="search-icon">⌕</span><input id="asset-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="基金代码、股票代码或指数名称" onKeyDown={(event) => { if (event.key === "Enter") runAnalysis(); }}/><select aria-label="资产类型" value={kind} onChange={(event) => setKind(event.target.value)}><option value="auto">自动识别</option><option value="fund">基金</option><option value="stock">股票</option><option value="index">指数</option></select></div>
-        <div className={`recognition recognition-${status}`}><span>✓</span>{status === "loading" ? "正在拉取标的与基准…" : `已识别 · ${asset.kindLabel}`}</div>
+        <label className="field-label">分析标的</label>
+        <div className="search-control"><span className="search-icon">⌕</span><AssetSearchInput
+          value={query}
+          kind={kind}
+          selected={selectedAsset}
+          placeholder="搜索任意基金、股票或指数"
+          onValueChange={(value) => { setQuery(value); setSelectedAsset(null); if (status !== "loading") setStatus("idle"); }}
+          onSelect={(item) => { setSelectedAsset(item); setQuery(assetDisplay(item)); setAsset(item); setStatus("idle"); setError(""); }}
+          onSubmit={runAnalysis}
+        /><select aria-label="资产类型" value={kind} onChange={(event) => { setKind(event.target.value as AssetKind); setSelectedAsset(null); }}><option value="auto">全部类型</option><option value="fund">基金</option><option value="stock">股票</option><option value="index">指数</option></select></div>
+        <div className={`recognition recognition-${status}`}><span>{selectedAsset || status === "success" ? "✓" : "⌕"}</span>{status === "loading" ? "正在拉取标的与基准…" : selectedAsset ? `已选择 · ${selectedAsset.kindLabel}，可继续搜索更换` : "输入名称、代码或简称，可随时更换标的"}</div>
         <h2>{asset.name}</h2><p className="asset-meta">{asset.kindLabel} <b>·</b> {asset.code}</p>
       </div>
       <div className="control-column period-column">
@@ -272,8 +294,11 @@ export default function Home() {
       <div className="benchmark-header"><div><h2>自定义复合基准</h2><p>各成分先计算日收益，再按设定权重每日再平衡合成；支持宽基、行业、债券指数自由搭配。</p></div><div className={`weight-total ${Math.abs(totalWeight - 100) < .01 ? "valid" : "invalid"}`}>权重合计 <strong>{totalWeight.toFixed(0)}%</strong></div></div>
       <div className="benchmark-content">
         <div className="benchmark-rows">{benchmarks.map((item, index) => <div className="benchmark-row" key={item.id}>
-          <span className="benchmark-number">{index + 1}</span><input value={item.query} onChange={(event) => updateBenchmark(item.id, { query: event.target.value })} placeholder="输入指数代码或名称"/>
-          <select value={item.kind} onChange={(event) => updateBenchmark(item.id, { kind: event.target.value })}><option value="auto">自动</option><option value="index">指数</option><option value="fund">基金</option><option value="stock">股票</option></select>
+          <span className="benchmark-number">{index + 1}</span><AssetSearchInput compact value={item.query} kind={item.kind} selected={item.asset}
+            placeholder="搜索基准成分名称或代码"
+            onValueChange={(value) => updateBenchmark(item.id, { query: value, asset: null })}
+            onSelect={(candidate) => updateBenchmark(item.id, { query: assetDisplay(candidate), kind: candidate.kind, asset: candidate })}/>
+          <select value={item.kind} onChange={(event) => updateBenchmark(item.id, { kind: event.target.value as AssetKind, asset: null })}><option value="auto">全部</option><option value="index">指数</option><option value="fund">基金</option><option value="stock">股票</option></select>
           <label><input type="number" min="0" max="100" step="1" value={item.weight} onChange={(event) => updateBenchmark(item.id, { weight: Number(event.target.value) })}/><span>%</span></label>
           <button className="remove-benchmark" aria-label={`删除基准成分${index + 1}`} onClick={() => setBenchmarks((items) => items.filter((entry) => entry.id !== item.id))}>×</button>
         </div>)}</div>
