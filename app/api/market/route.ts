@@ -21,6 +21,7 @@ type AssetCandidate = {
 type PricePoint = { date: string; value: number };
 
 const OPEN_BOND_INDEXES: AssetCandidate[] = [
+  { code: "000985", name: "中证全A（中证全指）", kind: "index", kindLabel: "指数", exchange: "SH", secid: "1.000985" },
   { code: "000012", name: "国债指数", kind: "index", kindLabel: "指数", exchange: "SH", secid: "1.000012" },
   { code: "399481", name: "企债指数", kind: "index", kindLabel: "指数", exchange: "SZ", secid: "0.399481" },
 ];

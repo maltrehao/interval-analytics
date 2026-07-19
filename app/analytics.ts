@@ -46,6 +46,41 @@ export const percentMetrics = new Set<MetricId>([
   "trackingError", "upCapture", "downCapture",
 ]);
 
+export type RollingHorizonId = "quarter" | "halfYear" | "year";
+
+export type RollingWinRate = {
+  id: RollingHorizonId;
+  label: string;
+  tradingDays: number;
+  observations: number;
+  winRate: number | null;
+  latestReturn: number | null;
+  points: { date: string; value: number }[];
+};
+
+export const rollingHorizonDefinitions: { id: RollingHorizonId; label: string; tradingDays: number }[] = [
+  { id: "quarter", label: "季度", tradingDays: 63 },
+  { id: "halfYear", label: "半年度", tradingDays: 126 },
+  { id: "year", label: "年度", tradingDays: 252 },
+];
+
+export function calculateRollingWinRates(series: PricePoint[]): Record<RollingHorizonId, RollingWinRate> {
+  return Object.fromEntries(rollingHorizonDefinitions.map((definition) => {
+    const points = series.slice(definition.tradingDays).map((point, index) => ({
+      date: point.date,
+      value: point.value / series[index].value - 1,
+    })).filter((point) => Number.isFinite(point.value));
+    const wins = points.filter((point) => point.value > 0).length;
+    return [definition.id, {
+      ...definition,
+      observations: points.length,
+      winRate: points.length ? wins / points.length : null,
+      latestReturn: points.at(-1)?.value ?? null,
+      points,
+    }];
+  })) as Record<RollingHorizonId, RollingWinRate>;
+}
+
 function mean(values: number[]) {
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
 }

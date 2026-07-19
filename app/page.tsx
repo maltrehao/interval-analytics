@@ -2,16 +2,22 @@
 
 import { useMemo, useState } from "react";
 import {
-  calculate, composeBenchmark, defaultMetrics, formatMetric, metricDefinitions,
-  type MetricId, type PricePoint,
+  calculate, calculateRollingWinRates, composeBenchmark, defaultMetrics, formatMetric, metricDefinitions,
+  rollingHorizonDefinitions, type MetricId, type PricePoint, type RollingHorizonId,
 } from "./analytics";
 import { AssetSearchInput, assetDisplay, type AssetCandidate, type AssetKind } from "./asset-search";
+import {
+  DrawdownChart as ReportDrawdownChart, PerformanceChart as ReportPerformanceChart, RollingReturnChart,
+  chartThemeLabels, type ChartLineWidth, type ChartSettings, type ChartTheme,
+} from "./report-charts";
 
 type Asset = AssetCandidate;
 type BenchmarkDraft = { id: string; query: string; kind: AssetKind; weight: number; asset?: Asset | null };
 type BenchmarkResolved = BenchmarkDraft & { asset: Asset; source: string; series: PricePoint[] };
+type PeerDraft = { id: string; query: string; kind: AssetKind; asset?: Asset | null };
+type PeerResolved = PeerDraft & { asset: Asset; source: string; series: PricePoint[] };
 
-const presets = ["沪深300", "中证A500", "中证500", "中证1000", "国债指数", "企债指数"];
+const presets = ["沪深300", "中证全A", "中证A500", "中证500", "中证1000", "国债指数", "企债指数"];
 const comparableMetrics: MetricId[] = ["return", "annualized", "drawdown", "volatility", "sharpe", "calmar", "sortino", "winRate"];
 
 function isoDate(date: Date) { return date.toISOString().slice(0, 10); }
@@ -19,6 +25,10 @@ function shiftDate(base: Date, months: number) {
   const date = new Date(base);
   date.setMonth(date.getMonth() + months);
   return isoDate(date);
+}
+
+function formatPercentValue(value: number | null) {
+  return value == null ? "数据不足" : `${(value * 100).toFixed(1)}%`;
 }
 
 function buildDemoSeries(multiplier = 1) {
@@ -48,64 +58,6 @@ function MetricIcon({ id }: { id: MetricId }) {
   return <span className={`metric-icon metric-icon-${id}`}>{glyphs[id]}</span>;
 }
 
-function PerformanceChart({ primary, benchmark, primaryLabel, benchmarkLabel }: {
-  primary: PricePoint[]; benchmark: PricePoint[]; primaryLabel: string; benchmarkLabel: string;
-}) {
-  const [hover, setHover] = useState<number | null>(null);
-  const normalized = primary.map((point) => ({ date: point.date, value: point.value / primary[0].value }));
-  const benchmarkNormalized = benchmark.length ? benchmark.map((point) => ({ date: point.date, value: point.value / benchmark[0].value })) : [];
-  const allValues = [...normalized, ...benchmarkNormalized].map((point) => point.value);
-  const min = Math.min(...allValues) * 0.985;
-  const max = Math.max(...allValues) * 1.015;
-  const width = 1040, height = 390, left = 62, right = 20, top = 22, bottom = 44;
-  const x = (index: number) => left + (index / Math.max(1, normalized.length - 1)) * (width - left - right);
-  const y = (value: number) => top + ((max - value) / Math.max(0.0001, max - min)) * (height - top - bottom);
-  const points = (items: { value: number }[]) => items.map((point, index) => `${x(index)},${y(point.value)}`).join(" ");
-  const tickIndexes = Array.from({ length: 6 }, (_, index) => Math.round((index / 5) * (normalized.length - 1)));
-  return (
-    <svg className="chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="标的与自定义基准累计收益对比图"
-      onPointerMove={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setHover(Math.max(0, Math.min(normalized.length - 1, Math.round(((event.clientX - rect.left) / rect.width) * (normalized.length - 1))))); }}
-      onPointerLeave={() => setHover(null)}>
-      {[0, 1, 2, 3, 4].map((tick) => {
-        const value = max - (tick / 4) * (max - min);
-        return <g key={tick}><line x1={left} x2={width - right} y1={y(value)} y2={y(value)} className="grid-line"/><text x={left - 11} y={y(value) + 4} className="axis-label" textAnchor="end">{((value - 1) * 100).toFixed(0)}%</text></g>;
-      })}
-      {tickIndexes.map((index) => <text key={index} x={x(index)} y={height - 12} className="axis-label" textAnchor="middle">{normalized[index]?.date.slice(0, 7)}</text>)}
-      {benchmarkNormalized.length > 0 && <polyline className="benchmark-line" points={points(benchmarkNormalized)}/>} 
-      <polyline className="performance-line" points={points(normalized)}/>
-      {hover != null && normalized[hover] && <g>
-        <line x1={x(hover)} x2={x(hover)} y1={top} y2={height - bottom} className="hover-line"/>
-        <circle cx={x(hover)} cy={y(normalized[hover].value)} r="5" className="hover-dot"/>
-        {benchmarkNormalized[hover] && <circle cx={x(hover)} cy={y(benchmarkNormalized[hover].value)} r="5" className="benchmark-dot"/>}
-        <g transform={`translate(${Math.min(width - 230, Math.max(left, x(hover) - 104))}, ${Math.max(8, y(normalized[hover].value) - 82)})`}>
-          <rect width="210" height={benchmarkNormalized[hover] ? 68 : 50} rx="6" className="tooltip-bg"/>
-          <text x="11" y="19" className="tooltip-date">{normalized[hover].date}</text>
-          <text x="11" y="39" className="tooltip-value">{primaryLabel} {((normalized[hover].value - 1) * 100).toFixed(2)}%</text>
-          {benchmarkNormalized[hover] && <text x="11" y="58" className="tooltip-benchmark">{benchmarkLabel} {((benchmarkNormalized[hover].value - 1) * 100).toFixed(2)}%</text>}
-        </g>
-      </g>}
-    </svg>
-  );
-}
-
-function DrawdownChart({ primary, benchmark }: { primary: { date: string; value: number }[]; benchmark?: { date: string; value: number }[] }) {
-  const width = 650, height = 390, left = 58, right = 20, top = 22, bottom = 44;
-  const min = Math.min(-0.01, ...primary.map((point) => point.value), ...(benchmark ?? []).map((point) => point.value)) * 1.15;
-  const x = (index: number) => left + (index / Math.max(1, primary.length - 1)) * (width - left - right);
-  const y = (value: number) => top + ((0 - value) / Math.abs(min)) * (height - top - bottom);
-  const line = (items: { value: number }[]) => items.map((point, index) => `${x(index)},${y(point.value)}`).join(" ");
-  const area = `${left},${y(0)} ${line(primary)} ${width - right},${y(0)}`;
-  const tickIndexes = Array.from({ length: 5 }, (_, index) => Math.round((index / 4) * (primary.length - 1)));
-  return <svg className="chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="标的与基准回撤对比图">
-    {[0, 1, 2, 3, 4].map((tick) => { const value = (min * tick) / 4; return <g key={tick}><line x1={left} x2={width - right} y1={y(value)} y2={y(value)} className="grid-line"/><text x={left - 10} y={y(value) + 4} className="axis-label" textAnchor="end">{(value * 100).toFixed(0)}%</text></g>; })}
-    <defs><linearGradient id="drawdown-fill-v2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#6d86aa" stopOpacity=".72"/><stop offset="1" stopColor="#9eb0c8" stopOpacity=".14"/></linearGradient></defs>
-    <polygon points={area} fill="url(#drawdown-fill-v2)"/>
-    <polyline className="drawdown-line" points={line(primary)}/>
-    {benchmark?.length ? <polyline className="benchmark-drawdown-line" points={line(benchmark)}/> : null}
-    {tickIndexes.map((index) => <text key={index} x={x(index)} y={height - 12} className="axis-label" textAnchor="middle">{primary[index]?.date.slice(0, 7)}</text>)}
-  </svg>;
-}
-
 export default function Home() {
   const today = useMemo(() => new Date(), []);
   const demoPrimary = useMemo(() => buildDemoSeries(1), []);
@@ -126,17 +78,28 @@ export default function Home() {
     { id: "benchmark-2", query: "国债指数", kind: "auto", weight: 20 },
   ]);
   const [resolvedBenchmarks, setResolvedBenchmarks] = useState<BenchmarkResolved[]>([]);
+  const [peers, setPeers] = useState<PeerDraft[]>([]);
+  const [resolvedPeers, setResolvedPeers] = useState<PeerResolved[]>([]);
   const [source, setSource] = useState("示例数据 · 点击“开始分析”获取公开行情");
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [error, setError] = useState("");
   const [chartTitle, setChartTitle] = useState("区间收益与自定义基准对比");
+  const [chartSettings, setChartSettings] = useState<ChartSettings>({ theme: "ocean", lineWidth: "standard", showBenchmark: true, showGrid: true, showArea: true });
+  const [selectedRolling, setSelectedRolling] = useState<RollingHorizonId[]>(["quarter", "halfYear", "year"]);
   const analysis = useMemo(() => calculate(series, riskFreeRate / 100, benchmarkSeries), [series, riskFreeRate, benchmarkSeries]);
+  const rolling = useMemo(() => calculateRollingWinRates(series), [series]);
+  const benchmarkRolling = useMemo(() => calculateRollingWinRates(benchmarkSeries), [benchmarkSeries]);
+  const peerAnalyses = useMemo(() => resolvedPeers.map((peer) => ({
+    ...peer,
+    analysis: calculate(peer.series, riskFreeRate / 100),
+    rolling: calculateRollingWinRates(peer.series),
+  })), [resolvedPeers, riskFreeRate]);
   const totalWeight = benchmarks.reduce((sum, item) => sum + (Number(item.weight) || 0), 0);
   const benchmarkLabel = resolvedBenchmarks.length
     ? resolvedBenchmarks.map((item) => `${item.asset.name}${item.weight}%`).join(" + ")
     : benchmarks.filter((item) => item.query).map((item) => `${item.query}${item.weight}%`).join(" + ");
-  const sourceLabel = resolvedBenchmarks.length
-    ? [...new Set([source.split(" · ")[0], ...resolvedBenchmarks.map((item) => item.source)])].join("、")
+  const sourceLabel = resolvedBenchmarks.length || resolvedPeers.length
+    ? [...new Set([source.split(" · ")[0], ...resolvedBenchmarks.map((item) => item.source), ...resolvedPeers.map((item) => item.source)])].join("、")
     : source.split(" · ")[0];
 
   const updateBenchmark = (id: string, patch: Partial<BenchmarkDraft>) => setBenchmarks((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item));
@@ -144,12 +107,15 @@ export default function Home() {
     if (benchmarks.some((item) => item.query === queryValue) && queryValue) return;
     setBenchmarks((items) => [...items, { id: `benchmark-${Date.now()}`, query: queryValue, kind: "auto", weight: 0 }]);
   };
+  const updatePeer = (id: string, patch: Partial<PeerDraft>) => setPeers((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item));
+  const addPeer = () => setPeers((items) => items.length >= 4 ? items : [...items, { id: `peer-${Date.now()}`, query: "", kind: "auto" }]);
   const chooseRange = (months: number | "ytd" | "all") => {
     if (months === "ytd") setStart(`${end.slice(0, 4)}-01-01`);
     else if (months === "all") setStart("1990-01-01");
     else setStart(shiftDate(new Date(`${end}T00:00:00`), -months));
   };
   const toggleMetric = (id: MetricId) => setSelected((items) => items.includes(id) ? (items.length > 1 ? items.filter((item) => item !== id) : items) : [...items, id]);
+  const toggleRolling = (id: RollingHorizonId) => setSelectedRolling((items) => items.includes(id) ? (items.length > 1 ? items.filter((item) => item !== id) : items) : [...items, id]);
 
   const fetchAsset = async (target: { query: string; kind: AssetKind; asset?: Asset | null }) => {
     const params = new URLSearchParams({ query: target.query, kind: target.kind, start, end });
@@ -176,11 +142,14 @@ export default function Home() {
     }
     setStatus("loading"); setError("");
     try {
-      const [primaryResult, ...benchmarkResults] = await Promise.all([
+      const activePeers = peers.filter((item) => item.query.trim());
+      const [primaryResult, benchmarkResults, peerResults] = await Promise.all([
         fetchAsset({ query, kind, asset: selectedAsset }),
-        ...activeBenchmarks.map((item) => fetchAsset(item)),
+        Promise.all(activeBenchmarks.map((item) => fetchAsset(item))),
+        Promise.all(activePeers.map((item) => fetchAsset(item))),
       ]);
       const resolved = benchmarkResults.map((result, index) => ({ ...activeBenchmarks[index], ...result }));
+      const resolvedPeerResults = peerResults.map((result, index) => ({ ...activePeers[index], ...result }));
       const composed = resolved.length
         ? composeBenchmark(primaryResult.series, resolved.map((item) => ({ series: item.series, weight: item.weight / 100 })))
         : { primary: primaryResult.series, benchmark: [] as PricePoint[] };
@@ -191,6 +160,7 @@ export default function Home() {
       setSeries(composed.primary);
       setBenchmarkSeries(composed.benchmark);
       setResolvedBenchmarks(resolved);
+      setResolvedPeers(resolvedPeerResults);
       setSource(`${primaryResult.source} · ${composed.primary[0].date}—${composed.primary.at(-1)!.date}`);
       setStatus("success");
     } catch (reason) {
@@ -202,7 +172,12 @@ export default function Home() {
   const exportCsv = () => {
     const benchmarkMap = new Map(benchmarkSeries.map((item) => [item.date, item.value]));
     const drawdownMap = new Map(analysis.drawdowns.map((item) => [item.date, item.value]));
-    const rows = ["日期,标的净值或收盘价,标的累计收益,复合基准累计收益,标的回撤", ...series.map((point) => `${point.date},${point.value},${point.value / series[0].value - 1},${benchmarkMap.has(point.date) ? benchmarkMap.get(point.date)! / benchmarkSeries[0].value - 1 : ""},${drawdownMap.get(point.date) ?? 0}`)];
+    const rollingMaps = Object.fromEntries(rollingHorizonDefinitions.map((item) => [item.id, new Map(rolling[item.id].points.map((point) => [point.date, point.value]))])) as Record<RollingHorizonId, Map<string, number>>;
+    const rows = ["日期,标的净值或收盘价,标的累计收益,复合基准累计收益,标的回撤,季度滚动收益,半年度滚动收益,年度滚动收益", ...series.map((point) => `${point.date},${point.value},${point.value / series[0].value - 1},${benchmarkMap.has(point.date) ? benchmarkMap.get(point.date)! / benchmarkSeries[0].value - 1 : ""},${drawdownMap.get(point.date) ?? 0},${rollingMaps.quarter.get(point.date) ?? ""},${rollingMaps.halfYear.get(point.date) ?? ""},${rollingMaps.year.get(point.date) ?? ""}`)];
+    if (peerAnalyses.length) {
+      rows.push("", "同类标的,代码,区间收益,年化收益,最大回撤,年化波动,夏普,季度胜率,半年度胜率,年度胜率");
+      rows.push(...peerAnalyses.map((item) => `${item.asset.name},${item.asset.code},${item.analysis.values.return ?? ""},${item.analysis.values.annualized ?? ""},${item.analysis.values.drawdown ?? ""},${item.analysis.values.volatility ?? ""},${item.analysis.values.sharpe ?? ""},${item.rolling.quarter.winRate ?? ""},${item.rolling.halfYear.winRate ?? ""},${item.rolling.year.winRate ?? ""}`));
+    }
     const blob = new Blob(["\ufeff", rows.join("\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob); const anchor = document.createElement("a");
     anchor.href = url; anchor.download = `${asset.code}_${start}_${end}_区间对比分析.csv`; anchor.click(); URL.revokeObjectURL(url);
@@ -212,7 +187,14 @@ export default function Home() {
     const canvas = document.createElement("canvas");
     canvas.width = 2400; canvas.height = 1350;
     const ctx = canvas.getContext("2d"); if (!ctx) return;
-    ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const palettes: Record<ChartTheme, { primary: string; benchmark: string; drawdown: string; background: string; card: string }> = {
+      ocean: { primary: "#315cf4", benchmark: "#e69b36", drawdown: "#5d7699", background: "#ffffff", card: "#f6f8fc" },
+      midnight: { primary: "#15213d", benchmark: "#b4832f", drawdown: "#52657e", background: "#fbfaf7", card: "#f0efe9" },
+      rose: { primary: "#b33b62", benchmark: "#2f8794", drawdown: "#79556a", background: "#fffafb", card: "#fbf0f3" },
+    };
+    const palette = palettes[chartSettings.theme];
+    const exportLineWidth = chartSettings.lineWidth === "fine" ? 4 : chartSettings.lineWidth === "bold" ? 8 : 6;
+    ctx.fillStyle = palette.background; ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = "#172033"; ctx.font = '700 52px "Microsoft YaHei", sans-serif'; ctx.fillText(chartTitle, 100, 100);
     ctx.fillStyle = "#667085"; ctx.font = '28px "Microsoft YaHei", sans-serif'; ctx.fillText(`${asset.name}（${asset.code}）｜${series[0].date}—${series.at(-1)!.date}`, 100, 150);
     ctx.strokeStyle = "#dfe3e8"; ctx.beginPath(); ctx.moveTo(100, 180); ctx.lineTo(2300, 180); ctx.stroke();
@@ -221,31 +203,34 @@ export default function Home() {
       ["最大回撤", formatMetric("drawdown", analysis.values.drawdown)], ["区间超额", formatMetric("excessReturn", analysis.values.excessReturn)],
     ];
     cards.forEach(([label, value], index) => {
-      const x = 100 + index * 550; ctx.fillStyle = "#f8f9fb"; ctx.fillRect(x, 220, 500, 130);
+      const x = 100 + index * 550; ctx.fillStyle = palette.card; ctx.fillRect(x, 220, 500, 130);
       ctx.fillStyle = "#667085"; ctx.font = '24px "Microsoft YaHei", sans-serif'; ctx.fillText(label, x + 28, 265);
       ctx.fillStyle = value.startsWith("-") ? "#169b62" : "#c84848"; ctx.font = '700 42px "Microsoft YaHei", sans-serif'; ctx.fillText(value, x + 28, 325);
     });
     const drawLineChart = (x0: number, y0: number, w: number, h: number) => {
       const primary = series.map((point) => point.value / series[0].value - 1);
-      const bench = benchmarkSeries.map((point) => point.value / benchmarkSeries[0].value - 1);
-      const values = [...primary, ...bench]; const low = Math.min(...values); const high = Math.max(...values); const range = Math.max(.001, high - low);
+      const bench = chartSettings.showBenchmark ? benchmarkSeries.map((point) => point.value / benchmarkSeries[0].value - 1) : [];
+      const peerLines = resolvedPeers.map((peer) => peer.series.map((point) => point.value / peer.series[0].value - 1));
+      const values = [...primary, ...bench, ...peerLines.flat()]; const low = Math.min(...values); const high = Math.max(...values); const range = Math.max(.001, high - low);
       ctx.strokeStyle = "#e2e6ec"; ctx.lineWidth = 2;
-      for (let i = 0; i <= 4; i += 1) { const y = y0 + (i / 4) * h; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 + w, y); ctx.stroke(); }
+      if (chartSettings.showGrid) for (let i = 0; i <= 4; i += 1) { const y = y0 + (i / 4) * h; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 + w, y); ctx.stroke(); }
       const draw = (items: number[], color: string, width: number) => { ctx.strokeStyle = color; ctx.lineWidth = width; ctx.beginPath(); items.forEach((value, index) => { const x = x0 + (index / Math.max(1, items.length - 1)) * w; const y = y0 + ((high - value) / range) * h; if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }); ctx.stroke(); };
-      if (bench.length) draw(bench, "#e69b36", 5); draw(primary, "#315cf4", 6);
+      const peerColors = ["#7f8ca8", "#4aa28f", "#9b72b0", "#c27b51"];
+      peerLines.forEach((items, index) => draw(items, peerColors[index % peerColors.length], Math.max(3, exportLineWidth - 2)));
+      if (bench.length) draw(bench, palette.benchmark, Math.max(3, exportLineWidth - 1)); draw(primary, palette.primary, exportLineWidth);
       ctx.fillStyle = "#172033"; ctx.font = '700 30px "Microsoft YaHei", sans-serif'; ctx.fillText("累计收益走势", x0, y0 - 38);
-      ctx.fillStyle = "#315cf4"; ctx.fillRect(x0 + 270, y0 - 54, 42, 5); ctx.fillStyle = "#536077"; ctx.font = '22px "Microsoft YaHei", sans-serif'; ctx.fillText(asset.name, x0 + 326, y0 - 40);
-      if (bench.length) { ctx.fillStyle = "#e69b36"; ctx.fillRect(x0 + 650, y0 - 54, 42, 5); ctx.fillStyle = "#536077"; ctx.fillText("自定义复合基准", x0 + 706, y0 - 40); }
+      ctx.fillStyle = palette.primary; ctx.fillRect(x0 + 270, y0 - 54, 42, 5); ctx.fillStyle = "#536077"; ctx.font = '22px "Microsoft YaHei", sans-serif'; ctx.fillText(asset.name, x0 + 326, y0 - 40);
+      if (bench.length) { ctx.fillStyle = palette.benchmark; ctx.fillRect(x0 + 650, y0 - 54, 42, 5); ctx.fillStyle = "#536077"; ctx.fillText("自定义复合基准", x0 + 706, y0 - 40); }
     };
     const drawDrawdown = (x0: number, y0: number, w: number, h: number) => {
       const items = analysis.drawdowns.map((item) => item.value); const low = Math.min(...items, -.01);
       ctx.fillStyle = "#172033"; ctx.font = '700 30px "Microsoft YaHei", sans-serif'; ctx.fillText("历史回撤", x0, y0 - 38);
-      ctx.strokeStyle = "#e2e6ec"; ctx.lineWidth = 2; for (let i = 0; i <= 4; i += 1) { const y = y0 + (i / 4) * h; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 + w, y); ctx.stroke(); }
-      ctx.strokeStyle = "#5d7699"; ctx.lineWidth = 5; ctx.beginPath(); items.forEach((value, index) => { const x = x0 + (index / Math.max(1, items.length - 1)) * w; const y = y0 + (value / low) * h; if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }); ctx.stroke();
+      ctx.strokeStyle = "#e2e6ec"; ctx.lineWidth = 2; if (chartSettings.showGrid) for (let i = 0; i <= 4; i += 1) { const y = y0 + (i / 4) * h; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 + w, y); ctx.stroke(); }
+      ctx.strokeStyle = palette.drawdown; ctx.lineWidth = exportLineWidth; ctx.beginPath(); items.forEach((value, index) => { const x = x0 + (index / Math.max(1, items.length - 1)) * w; const y = y0 + (value / low) * h; if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }); ctx.stroke();
     };
     drawLineChart(110, 455, 1380, 590); drawDrawdown(1600, 455, 680, 590);
     ctx.strokeStyle = "#dfe3e8"; ctx.beginPath(); ctx.moveTo(100, 1110); ctx.lineTo(2300, 1110); ctx.stroke();
-    ctx.fillStyle = "#536077"; ctx.font = '24px "Microsoft YaHei", sans-serif'; ctx.fillText(`复合基准：${benchmarkLabel || "未设置"}`, 100, 1165);
+    ctx.fillStyle = "#536077"; ctx.font = '24px "Microsoft YaHei", sans-serif'; ctx.fillText(`复合基准：${benchmarkLabel || "未设置"}｜季度/半年/年度滚动胜率：${formatPercentValue(rolling.quarter.winRate)} / ${formatPercentValue(rolling.halfYear.winRate)} / ${formatPercentValue(rolling.year.winRate)}`, 100, 1165);
     ctx.fillStyle = "#667085"; ctx.font = '22px "Microsoft YaHei", sans-serif'; ctx.fillText(`数据来源：${sourceLabel}；计算口径：复合基准每日按设定权重再平衡。`, 100, 1220);
     ctx.fillStyle = "#98a2b3"; ctx.font = '20px "Microsoft YaHei", sans-serif'; ctx.fillText("市场有风险，投资需谨慎；数据与测算仅供参考，不构成任何投资建议。", 100, 1270);
     const url = canvas.toDataURL("image/png"); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${asset.code}_${chartTitle}.png`; anchor.click();
@@ -306,6 +291,18 @@ export default function Home() {
       </div>
     </section>
 
+    <section className="peer-panel" aria-label="同类标的对比">
+      <div className="peer-header"><div><h2>同类标的数据</h2><p>最多添加4个同类基金、股票或指数；重新分析后统一比较收益、风险和滚动胜率。</p></div><button onClick={addPeer} disabled={peers.length >= 4}>＋ 添加同类标的</button></div>
+      {peers.length ? <div className="peer-rows">{peers.map((item, index) => <div className="peer-row" key={item.id}>
+        <span className={`peer-swatch peer-swatch-${index % 4}`}/><AssetSearchInput compact value={item.query} kind={item.kind} selected={item.asset}
+          placeholder="搜索同类标的名称或代码"
+          onValueChange={(value) => updatePeer(item.id, { query: value, asset: null })}
+          onSelect={(candidate) => updatePeer(item.id, { query: assetDisplay(candidate), kind: candidate.kind, asset: candidate })}/>
+        <select value={item.kind} onChange={(event) => updatePeer(item.id, { kind: event.target.value as AssetKind, asset: null })}><option value="auto">全部</option><option value="index">指数</option><option value="fund">基金</option><option value="stock">股票</option></select>
+        <button className="remove-benchmark" aria-label={`删除同类标的${index + 1}`} onClick={() => setPeers((items) => items.filter((entry) => entry.id !== item.id))}>×</button>
+      </div>)}</div> : <p className="peer-empty">尚未添加同类标的。添加后会同时出现在走势图和同类指标表中。</p>}
+    </section>
+
     <section className={`metrics-grid ${status === "loading" ? "is-loading" : ""}`} aria-label="绩效指标">
       {metricDefinitions.filter((metric) => selected.includes(metric.id)).map((metric) => {
         const raw = analysis.values[metric.id];
@@ -315,23 +312,49 @@ export default function Home() {
       })}
     </section>
 
-    <section className="image-toolbar"><div><label>图表标题 <input value={chartTitle} onChange={(event) => setChartTitle(event.target.value)} maxLength={42}/></label><p>下载图片将自动附带区间、基准配比、数据来源和风险提示。</p></div><button onClick={exportPng}>下载高清PNG</button></section>
+    <section className="rolling-panel" aria-label="滚动胜率">
+      <div className="rolling-header"><div><h2>滚动胜率</h2><p>在当前区间内，以每个交易日为观察终点，统计过去约63、126和252个交易日收益为正的比例。</p></div><div className="rolling-toggles">{rollingHorizonDefinitions.map((item) => <button key={item.id} className={selectedRolling.includes(item.id) ? "selected" : ""} onClick={() => toggleRolling(item.id)}>{selectedRolling.includes(item.id) ? "✓ " : ""}{item.label}</button>)}</div></div>
+      <div className="rolling-summary-grid">{rollingHorizonDefinitions.map((item) => {
+        const current = rolling[item.id];
+        const benchmarkCurrent = benchmarkRolling[item.id];
+        return <article key={item.id}><span>{item.label}滚动胜率</span><strong>{formatPercentValue(current.winRate)}</strong><p>最近滚动收益 {formatPercentValue(current.latestReturn)}</p><small>{current.observations}个有效窗口{analysis.benchmark ? ` · 基准胜率 ${formatPercentValue(benchmarkCurrent.winRate)}` : ""}</small></article>;
+      })}</div>
+      <div className="rolling-chart-card"><div className="rolling-legend"><strong>滚动收益轨迹</strong>{rollingHorizonDefinitions.filter((item) => selectedRolling.includes(item.id)).map((item) => <span key={item.id} className={`rolling-legend-${item.id}`}>{item.label}</span>)}</div><RollingReturnChart rolling={rolling} selected={selectedRolling} settings={chartSettings}/><p>曲线位于0%以上代表对应持有期取得正收益；胜率为所有有效滚动窗口中正收益窗口的占比。</p></div>
+    </section>
+
+    <section className="image-toolbar chart-settings-panel">
+      <div className="chart-title-control"><label>图表标题 <input value={chartTitle} onChange={(event) => setChartTitle(event.target.value)} maxLength={42}/></label><p>下载图片会自动附带区间、基准配比、数据来源和风险提示。</p></div>
+      <div className="chart-settings">
+        <label>配色<select value={chartSettings.theme} onChange={(event) => setChartSettings((value) => ({ ...value, theme: event.target.value as ChartTheme }))}>{Object.entries(chartThemeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label>线宽<select value={chartSettings.lineWidth} onChange={(event) => setChartSettings((value) => ({ ...value, lineWidth: event.target.value as ChartLineWidth }))}><option value="fine">纤细</option><option value="standard">标准</option><option value="bold">醒目</option></select></label>
+        <label className="setting-check"><input type="checkbox" checked={chartSettings.showBenchmark} onChange={(event) => setChartSettings((value) => ({ ...value, showBenchmark: event.target.checked }))}/>基准线</label>
+        <label className="setting-check"><input type="checkbox" checked={chartSettings.showGrid} onChange={(event) => setChartSettings((value) => ({ ...value, showGrid: event.target.checked }))}/>网格</label>
+        <label className="setting-check"><input type="checkbox" checked={chartSettings.showArea} onChange={(event) => setChartSettings((value) => ({ ...value, showArea: event.target.checked }))}/>渐变填充</label>
+      </div>
+      <button onClick={exportPng}>下载高清PNG</button>
+    </section>
 
     <section className={`charts-grid ${status === "loading" ? "is-loading" : ""}`}>
       <article className="chart-card performance-card">
-        <div className="chart-report-header"><div><h3>{chartTitle}</h3><p>{asset.name}（{asset.code}）｜{series[0].date}—{series.at(-1)!.date}</p></div><div className="legend"><span className="legend-blue"/>{asset.name}<span className="legend-orange"/>自定义复合基准</div></div>
-        <div className="chart-wrap"><PerformanceChart primary={series} benchmark={benchmarkSeries} primaryLabel={asset.name} benchmarkLabel="复合基准"/></div>
+        <div className="chart-report-header"><div><h3>{chartTitle}</h3><p>{asset.name}（{asset.code}）｜{series[0].date}—{series.at(-1)!.date}</p></div><div className="legend"><span className="legend-blue"/>{asset.name}{chartSettings.showBenchmark && <><span className="legend-orange"/>自定义复合基准</>}{resolvedPeers.map((peer, index) => <span className="peer-legend" key={peer.id}><i className={`peer-swatch peer-swatch-${index % 4}`}/>{peer.asset.name}</span>)}</div></div>
+        <div className="chart-wrap"><ReportPerformanceChart primary={series} benchmark={benchmarkSeries} peers={resolvedPeers.map((peer) => ({ label: peer.asset.name, series: peer.series }))} primaryLabel={asset.name} benchmarkLabel="复合基准" settings={chartSettings}/></div>
         <div className="figure-source">数据来源：{sourceLabel}；复合基准：{benchmarkLabel || "未设置"}。观点及测算仅供参考，不构成投资建议。</div>
       </article>
       <article className="chart-card drawdown-card">
         <div className="chart-report-header"><div><h3>区间回撤与修复</h3><p>前高：{analysis.dates.peak}｜谷底：{analysis.dates.trough}｜{analysis.dates.recovered ? `修复：${analysis.dates.recovered}` : "尚未修复"}</p></div><div className="drawdown-summary">标的 <strong>{formatMetric("drawdown", analysis.values.drawdown)}</strong></div></div>
-        <div className="chart-wrap"><DrawdownChart primary={analysis.drawdowns} benchmark={analysis.benchmark?.drawdowns}/></div>
+        <div className="chart-wrap"><ReportDrawdownChart primary={analysis.drawdowns} benchmark={analysis.benchmark?.drawdowns} settings={chartSettings}/></div>
         <div className="figure-source">数据来源：{sourceLabel}；最大回撤按历史峰值至后续低点计算，修复以重新达到前高为准。</div>
       </article>
     </section>
 
     {analysis.benchmark && <section className="comparison-table"><div className="comparison-heading"><h2>标的与复合基准指标对比</h2><p>{benchmarkLabel}</p></div><div className="comparison-grid"><div className="comparison-row comparison-header-row"><span>指标</span><span>{asset.name}</span><span>复合基准</span><span>相对表现</span></div>{(["return", "annualized", "volatility", "drawdown", "sharpe", "calmar"] as MetricId[]).map((id) => { const definition = metricDefinitions.find((item) => item.id === id)!; const assetValue = analysis.values[id]; const benchmarkValue = (analysis.benchmark!.values as Record<string, number | null>)[id]; const difference = assetValue != null && benchmarkValue != null ? assetValue - benchmarkValue : null; return <div className="comparison-row" key={id}><strong>{definition.label}</strong><span>{formatMetric(id, assetValue)}</span><span>{formatMetric(id, benchmarkValue)}</span><span className={difference != null && difference >= 0 ? "positive" : "negative"}>{difference == null ? "—" : formatMetric(id, difference)}</span></div>; })}</div></section>}
 
-    <footer><span>ⓘ</span> 数据仅供分析，不构成投资建议。年化指标按252个交易日计；Alpha、Beta与捕获率均基于所选区间日收益估算。</footer>
+    {resolvedPeers.length > 0 && <section className="peer-comparison-table">
+      <div className="comparison-heading"><div><h2>同类标的横向对比</h2><p>同一区间、同一计算口径；滚动胜率按各标的自身有效交易日计算。</p></div><span>{resolvedPeers.length + 1}个标的</span></div>
+      <div className="peer-table-scroll"><div className="peer-table-row peer-table-header"><span>标的</span><span>区间收益</span><span>年化收益</span><span>最大回撤</span><span>年化波动</span><span>夏普</span><span>季度胜率</span><span>半年胜率</span><span>年度胜率</span></div>
+      {[{ id: "primary", asset, analysis, rolling }, ...peerAnalyses].map((item, index) => <div className="peer-table-row" key={item.id}><strong><i className={index === 0 ? "primary-swatch" : `peer-swatch peer-swatch-${(index - 1) % 4}`}/>{item.asset.name}<small>{item.asset.code}</small></strong><span>{formatMetric("return", item.analysis.values.return)}</span><span>{formatMetric("annualized", item.analysis.values.annualized)}</span><span>{formatMetric("drawdown", item.analysis.values.drawdown)}</span><span>{formatMetric("volatility", item.analysis.values.volatility)}</span><span>{formatMetric("sharpe", item.analysis.values.sharpe)}</span><span>{formatPercentValue(item.rolling.quarter.winRate)}</span><span>{formatPercentValue(item.rolling.halfYear.winRate)}</span><span>{formatPercentValue(item.rolling.year.winRate)}</span></div>)}</div>
+    </section>}
+
+    <footer><span>ⓘ</span> 数据仅供分析，不构成投资建议。年化指标按252个交易日计；滚动季度、半年和年度分别按63、126、252个交易日估算。</footer>
   </main>;
 }
