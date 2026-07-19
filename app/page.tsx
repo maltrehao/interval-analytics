@@ -84,6 +84,12 @@ export default function Home() {
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [error, setError] = useState("");
   const [chartTitle, setChartTitle] = useState("区间收益与自定义基准对比");
+  const [customSourceText, setCustomSourceText] = useState("");
+  const [benchmarkTableTitle, setBenchmarkTableTitle] = useState("标的与复合基准指标对比");
+  const [benchmarkHeaders, setBenchmarkHeaders] = useState(["指标", "", "复合基准", "相对表现"]);
+  const [peerTableTitle, setPeerTableTitle] = useState("同类标的横向对比");
+  const [peerTableSubtitle, setPeerTableSubtitle] = useState("同一区间、同一计算口径；滚动胜率按各标的自身有效交易日计算。");
+  const [peerHeaders, setPeerHeaders] = useState(["标的", "区间收益", "年化收益", "最大回撤", "年化波动", "夏普", "季度胜率", "半年胜率", "年度胜率"]);
   const [chartSettings, setChartSettings] = useState<ChartSettings>({ theme: "ocean", lineWidth: "standard", showBenchmark: true, showGrid: true, showArea: true });
   const [selectedRolling, setSelectedRolling] = useState<RollingHorizonId[]>(["quarter", "halfYear", "year"]);
   const analysis = useMemo(() => calculate(series, riskFreeRate / 100, benchmarkSeries), [series, riskFreeRate, benchmarkSeries]);
@@ -101,6 +107,7 @@ export default function Home() {
   const sourceLabel = resolvedBenchmarks.length || resolvedPeers.length
     ? [...new Set([source.split(" · ")[0], ...resolvedBenchmarks.map((item) => item.source), ...resolvedPeers.map((item) => item.source)])].join("、")
     : source.split(" · ")[0];
+  const sourceCaption = customSourceText.trim() || `数据来源：${sourceLabel}`;
 
   const updateBenchmark = (id: string, patch: Partial<BenchmarkDraft>) => setBenchmarks((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item));
   const addBenchmark = (queryValue = "") => {
@@ -231,7 +238,7 @@ export default function Home() {
     drawLineChart(110, 455, 1380, 590); drawDrawdown(1600, 455, 680, 590);
     ctx.strokeStyle = "#dfe3e8"; ctx.beginPath(); ctx.moveTo(100, 1110); ctx.lineTo(2300, 1110); ctx.stroke();
     ctx.fillStyle = "#536077"; ctx.font = '24px "Microsoft YaHei", sans-serif'; ctx.fillText(`复合基准：${benchmarkLabel || "未设置"}｜季度/半年/年度滚动胜率：${formatPercentValue(rolling.quarter.winRate)} / ${formatPercentValue(rolling.halfYear.winRate)} / ${formatPercentValue(rolling.year.winRate)}`, 100, 1165);
-    ctx.fillStyle = "#667085"; ctx.font = '22px "Microsoft YaHei", sans-serif'; ctx.fillText(`数据来源：${sourceLabel}；计算口径：复合基准每日按设定权重再平衡。`, 100, 1220);
+    ctx.fillStyle = "#667085"; ctx.font = '22px "Microsoft YaHei", sans-serif'; ctx.fillText(`${sourceCaption}；计算口径：复合基准每日按设定权重再平衡。`, 100, 1220);
     ctx.fillStyle = "#98a2b3"; ctx.font = '20px "Microsoft YaHei", sans-serif'; ctx.fillText("市场有风险，投资需谨慎；数据与测算仅供参考，不构成任何投资建议。", 100, 1270);
     const url = canvas.toDataURL("image/png"); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${asset.code}_${chartTitle}.png`; anchor.click();
   };
@@ -334,24 +341,37 @@ export default function Home() {
       <button onClick={exportPng}>下载高清PNG</button>
     </section>
 
+    <details className="copy-editor" open>
+      <summary>编辑表格与来源文案 <span>修改后立即应用到页面，数据计算结果不会改变</span></summary>
+      <div className="copy-editor-grid">
+        <label className="copy-editor-wide">数据来源文字<input value={customSourceText} onChange={(event) => setCustomSourceText(event.target.value)} placeholder={`数据来源：${sourceLabel}`} maxLength={120}/></label>
+        <label>基准表标题<input value={benchmarkTableTitle} onChange={(event) => setBenchmarkTableTitle(event.target.value)} maxLength={36}/></label>
+        <label>同类表标题<input value={peerTableTitle} onChange={(event) => setPeerTableTitle(event.target.value)} maxLength={36}/></label>
+        <label className="copy-editor-wide">同类表说明<input value={peerTableSubtitle} onChange={(event) => setPeerTableSubtitle(event.target.value)} maxLength={80}/></label>
+      </div>
+      <div className="header-editor-group"><strong>基准对比表头</strong><div className="header-editor-row benchmark-header-editor">{benchmarkHeaders.map((value, index) => <input key={index} aria-label={`基准对比表头${index + 1}`} value={value} placeholder={index === 1 ? asset.name : "表头"} onChange={(event) => setBenchmarkHeaders((items) => items.map((item, itemIndex) => itemIndex === index ? event.target.value : item))}/>)}</div></div>
+      <div className="header-editor-group"><strong>同类对比表头</strong><div className="header-editor-row peer-header-editor">{peerHeaders.map((value, index) => <input key={index} aria-label={`同类对比表头${index + 1}`} value={value} onChange={(event) => setPeerHeaders((items) => items.map((item, itemIndex) => itemIndex === index ? event.target.value : item))}/>)}</div></div>
+      <button className="reset-copy" type="button" onClick={() => { setCustomSourceText(""); setBenchmarkTableTitle("标的与复合基准指标对比"); setBenchmarkHeaders(["指标", "", "复合基准", "相对表现"]); setPeerTableTitle("同类标的横向对比"); setPeerTableSubtitle("同一区间、同一计算口径；滚动胜率按各标的自身有效交易日计算。"); setPeerHeaders(["标的", "区间收益", "年化收益", "最大回撤", "年化波动", "夏普", "季度胜率", "半年胜率", "年度胜率"]); }}>恢复默认文案</button>
+    </details>
+
     <section className={`charts-grid ${status === "loading" ? "is-loading" : ""}`}>
       <article className="chart-card performance-card">
         <div className="chart-report-header"><div><h3>{chartTitle}</h3><p>{asset.name}（{asset.code}）｜{series[0].date}—{series.at(-1)!.date}</p></div><div className="legend"><span className="legend-blue"/>{asset.name}{chartSettings.showBenchmark && <><span className="legend-orange"/>自定义复合基准</>}{resolvedPeers.map((peer, index) => <span className="peer-legend" key={peer.id}><i className={`peer-swatch peer-swatch-${index % 4}`}/>{peer.asset.name}</span>)}</div></div>
         <div className="chart-wrap"><ReportPerformanceChart primary={series} benchmark={benchmarkSeries} peers={resolvedPeers.map((peer) => ({ label: peer.asset.name, series: peer.series }))} primaryLabel={asset.name} benchmarkLabel="复合基准" settings={chartSettings}/></div>
-        <div className="figure-source">数据来源：{sourceLabel}；复合基准：{benchmarkLabel || "未设置"}。观点及测算仅供参考，不构成投资建议。</div>
+        <div className="figure-source">{sourceCaption}；复合基准：{benchmarkLabel || "未设置"}。观点及测算仅供参考，不构成投资建议。</div>
       </article>
       <article className="chart-card drawdown-card">
         <div className="chart-report-header"><div><h3>区间回撤与修复</h3><p>前高：{analysis.dates.peak}｜谷底：{analysis.dates.trough}｜{analysis.dates.recovered ? `修复：${analysis.dates.recovered}` : "尚未修复"}</p></div><div className="drawdown-summary">标的 <strong>{formatMetric("drawdown", analysis.values.drawdown)}</strong></div></div>
         <div className="chart-wrap"><ReportDrawdownChart primary={analysis.drawdowns} benchmark={analysis.benchmark?.drawdowns} settings={chartSettings}/></div>
-        <div className="figure-source">数据来源：{sourceLabel}；最大回撤按历史峰值至后续低点计算，修复以重新达到前高为准。</div>
+        <div className="figure-source">{sourceCaption}；最大回撤按历史峰值至后续低点计算，修复以重新达到前高为准。</div>
       </article>
     </section>
 
-    {analysis.benchmark && <section className="comparison-table"><div className="comparison-heading"><h2>标的与复合基准指标对比</h2><p>{benchmarkLabel}</p></div><div className="comparison-grid"><div className="comparison-row comparison-header-row"><span>指标</span><span>{asset.name}</span><span>复合基准</span><span>相对表现</span></div>{(["return", "annualized", "volatility", "drawdown", "sharpe", "calmar"] as MetricId[]).map((id) => { const definition = metricDefinitions.find((item) => item.id === id)!; const assetValue = analysis.values[id]; const benchmarkValue = (analysis.benchmark!.values as Record<string, number | null>)[id]; const difference = assetValue != null && benchmarkValue != null ? assetValue - benchmarkValue : null; return <div className="comparison-row" key={id}><strong>{definition.label}</strong><span>{formatMetric(id, assetValue)}</span><span>{formatMetric(id, benchmarkValue)}</span><span className={difference != null && difference >= 0 ? "positive" : "negative"}>{difference == null ? "—" : formatMetric(id, difference)}</span></div>; })}</div></section>}
+    {analysis.benchmark && <section className="comparison-table"><div className="comparison-heading"><h2>{benchmarkTableTitle}</h2><p>{benchmarkLabel}</p></div><div className="comparison-grid"><div className="comparison-row comparison-header-row">{benchmarkHeaders.map((header, index) => <span key={index}>{header || (index === 1 ? asset.name : "")}</span>)}</div>{(["return", "annualized", "volatility", "drawdown", "sharpe", "calmar"] as MetricId[]).map((id) => { const definition = metricDefinitions.find((item) => item.id === id)!; const assetValue = analysis.values[id]; const benchmarkValue = (analysis.benchmark!.values as Record<string, number | null>)[id]; const difference = assetValue != null && benchmarkValue != null ? assetValue - benchmarkValue : null; return <div className="comparison-row" key={id}><strong>{definition.label}</strong><span>{formatMetric(id, assetValue)}</span><span>{formatMetric(id, benchmarkValue)}</span><span className={difference != null && difference >= 0 ? "positive" : "negative"}>{difference == null ? "—" : formatMetric(id, difference)}</span></div>; })}</div></section>}
 
     {resolvedPeers.length > 0 && <section className="peer-comparison-table">
-      <div className="comparison-heading"><div><h2>同类标的横向对比</h2><p>同一区间、同一计算口径；滚动胜率按各标的自身有效交易日计算。</p></div><span>{resolvedPeers.length + 1}个标的</span></div>
-      <div className="peer-table-scroll"><div className="peer-table-row peer-table-header"><span>标的</span><span>区间收益</span><span>年化收益</span><span>最大回撤</span><span>年化波动</span><span>夏普</span><span>季度胜率</span><span>半年胜率</span><span>年度胜率</span></div>
+      <div className="comparison-heading"><div><h2>{peerTableTitle}</h2><p>{peerTableSubtitle}</p></div><span>{resolvedPeers.length + 1}个标的</span></div>
+      <div className="peer-table-scroll"><div className="peer-table-row peer-table-header">{peerHeaders.map((header, index) => <span key={index}>{header}</span>)}</div>
       {[{ id: "primary", asset, analysis, rolling }, ...peerAnalyses].map((item, index) => <div className="peer-table-row" key={item.id}><strong><i className={index === 0 ? "primary-swatch" : `peer-swatch peer-swatch-${(index - 1) % 4}`}/>{item.asset.name}<small>{item.asset.code}</small></strong><span>{formatMetric("return", item.analysis.values.return)}</span><span>{formatMetric("annualized", item.analysis.values.annualized)}</span><span>{formatMetric("drawdown", item.analysis.values.drawdown)}</span><span>{formatMetric("volatility", item.analysis.values.volatility)}</span><span>{formatMetric("sharpe", item.analysis.values.sharpe)}</span><span>{formatPercentValue(item.rolling.quarter.winRate)}</span><span>{formatPercentValue(item.rolling.halfYear.winRate)}</span><span>{formatPercentValue(item.rolling.year.winRate)}</span></div>)}</div>
     </section>}
 
