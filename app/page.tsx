@@ -1,13 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  calculate, calculateRollingWinRates, composeBenchmark, defaultMetrics, formatMetric, metricDefinitions,
-  rollingHorizonDefinitions, type MetricId, type PricePoint, type RollingHorizonId,
+  buildChartMetricSeries, calculate, calculateRollingWinRates, composeBenchmark, defaultMetrics, formatMetric, metricDefinitions,
+  rollingHorizonDefinitions, type ChartMetric, type MetricId, type PricePoint, type RollingHorizonId,
 } from "./analytics";
 import { AssetSearchInput, assetDisplay, type AssetCandidate, type AssetKind } from "./asset-search";
 import {
-  DrawdownChart as ReportDrawdownChart, PerformanceChart as ReportPerformanceChart, RollingReturnChart,
+  MetricTrendChart, RollingReturnChart,
   chartThemeLabels, type ChartLineWidth, type ChartSettings, type ChartTheme,
 } from "./report-charts";
 
@@ -16,8 +16,23 @@ type BenchmarkDraft = { id: string; query: string; kind: AssetKind; weight: numb
 type BenchmarkResolved = BenchmarkDraft & { asset: Asset; source: string; series: PricePoint[] };
 type PeerDraft = { id: string; query: string; kind: AssetKind; asset?: Asset | null };
 type PeerResolved = PeerDraft & { asset: Asset; source: string; series: PricePoint[] };
+type FundPortfolio = { reportDate: string; allocation: { stock: number | null; bond: number | null; cash: number | null; other: number | null }; industries: { name: string; percent: number }[]; source: string };
 
 const presets = ["沪深300", "中证全A", "中证A500", "中证500", "中证1000", "国债指数", "企债指数"];
+const benchmarkCandidates: AssetCandidate[] = [
+  { code: "000300", name: "沪深300", kind: "index", kindLabel: "宽基指数", exchange: "SH", secid: "1.000300" },
+  { code: "000510", name: "中证A500", kind: "index", kindLabel: "宽基指数", exchange: "SH", secid: "1.000510" },
+  { code: "000985", name: "中证全A（中证全指）", kind: "index", kindLabel: "宽基指数", exchange: "SH", secid: "1.000985" },
+  { code: "000905", name: "中证500", kind: "index", kindLabel: "宽基指数", exchange: "SH", secid: "1.000905" },
+  { code: "000852", name: "中证1000", kind: "index", kindLabel: "宽基指数", exchange: "SH", secid: "1.000852" },
+  { code: "000012", name: "国债指数", kind: "index", kindLabel: "债券指数", exchange: "SH", secid: "1.000012" },
+  { code: "399481", name: "企债指数", kind: "index", kindLabel: "债券指数", exchange: "SZ", secid: "0.399481" },
+];
+const chartMetricDefinitions: { id: ChartMetric; label: string; short: string; percent: boolean }[] = [
+  { id: "return", label: "累计收益率", short: "收益率", percent: true }, { id: "drawdown", label: "历史回撤", short: "回撤", percent: true },
+  { id: "rollingReturn", label: "滚动收益率", short: "滚动收益", percent: true }, { id: "rollingVolatility", label: "滚动年化波动率", short: "波动率", percent: true },
+  { id: "rollingSharpe", label: "滚动夏普比率", short: "夏普比率", percent: false }, { id: "rollingDrawdown", label: "滚动最大回撤", short: "最大回撤", percent: true },
+];
 const comparableMetrics: MetricId[] = ["return", "annualized", "drawdown", "volatility", "sharpe", "calmar", "sortino", "winRate"];
 
 function isoDate(date: Date) { return date.toISOString().slice(0, 10); }
@@ -83,7 +98,11 @@ export default function Home() {
   const [source, setSource] = useState("示例数据 · 点击“开始分析”获取公开行情");
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [error, setError] = useState("");
-  const [chartTitle, setChartTitle] = useState("区间收益与自定义基准对比");
+  const chartTitle = `${asset.name}区间分析`;
+  const [portfolio, setPortfolio] = useState<FundPortfolio | null>(null);
+  const [portfolioStatus, setPortfolioStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [chartMetric, setChartMetric] = useState<ChartMetric>("return");
+  const [rollingWindow, setRollingWindow] = useState(252);
   const [customSourceText, setCustomSourceText] = useState("");
   const [benchmarkTableTitle, setBenchmarkTableTitle] = useState("标的与复合基准指标对比");
   const [benchmarkHeaders, setBenchmarkHeaders] = useState(["指标", "", "复合基准", "相对表现"]);
@@ -93,6 +112,9 @@ export default function Home() {
   const [chartSettings, setChartSettings] = useState<ChartSettings>({ theme: "ocean", lineWidth: "standard", showBenchmark: true, showGrid: true, showArea: true });
   const [selectedRolling, setSelectedRolling] = useState<RollingHorizonId[]>(["quarter", "halfYear", "year"]);
   const analysis = useMemo(() => calculate(series, riskFreeRate / 100, benchmarkSeries), [series, riskFreeRate, benchmarkSeries]);
+  const chartDefinition = chartMetricDefinitions.find((item) => item.id === chartMetric)!;
+  const chartPrimary = useMemo(() => buildChartMetricSeries(series, chartMetric, rollingWindow, riskFreeRate / 100), [series, chartMetric, rollingWindow, riskFreeRate]);
+  const chartBenchmark = useMemo(() => buildChartMetricSeries(benchmarkSeries, chartMetric, rollingWindow, riskFreeRate / 100), [benchmarkSeries, chartMetric, rollingWindow, riskFreeRate]);
   const rolling = useMemo(() => calculateRollingWinRates(series), [series]);
   const benchmarkRolling = useMemo(() => calculateRollingWinRates(benchmarkSeries), [benchmarkSeries]);
   const peerAnalyses = useMemo(() => resolvedPeers.map((peer) => ({
@@ -108,6 +130,17 @@ export default function Home() {
     ? [...new Set([source.split(" · ")[0], ...resolvedBenchmarks.map((item) => item.source), ...resolvedPeers.map((item) => item.source)])].join("、")
     : source.split(" · ")[0];
   const sourceCaption = customSourceText.trim() || `数据来源：${sourceLabel}`;
+
+  useEffect(() => {
+    const target = selectedAsset?.kind === "fund" ? selectedAsset : asset.kind === "fund" && asset.code !== "DEMO" ? asset : null;
+    if (!target) return;
+    const controller = new AbortController();
+    const loadingTimer = window.setTimeout(() => setPortfolioStatus("loading"), 0);
+    fetch(`/api/market?action=portfolio&code=${encodeURIComponent(target.code)}`, { cache: "no-store", signal: controller.signal })
+      .then(async (response) => { const json = await response.json() as { portfolio?: FundPortfolio; error?: string }; if (!response.ok || !json.portfolio) throw new Error(json.error ?? "持仓数据暂时不可用"); setPortfolio(json.portfolio); setPortfolioStatus("success"); })
+      .catch((reason) => { if (!controller.signal.aborted) { setPortfolio(null); setPortfolioStatus("error"); console.warn(reason); } });
+    return () => { window.clearTimeout(loadingTimer); controller.abort(); };
+  }, [asset, selectedAsset]);
 
   const updateBenchmark = (id: string, patch: Partial<BenchmarkDraft>) => setBenchmarks((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item));
   const addBenchmark = (queryValue = "") => {
@@ -263,16 +296,11 @@ export default function Home() {
           selected={selectedAsset}
           placeholder="搜索任意基金、股票或指数"
           onValueChange={(value) => { setQuery(value); setSelectedAsset(null); if (status !== "loading") setStatus("idle"); }}
-          onSelect={(item) => { setSelectedAsset(item); setQuery(assetDisplay(item)); setAsset(item); setStatus("idle"); setError(""); }}
+          onSelect={(item) => { setSelectedAsset(item); setQuery(assetDisplay(item)); setAsset(item); setPortfolio(null); setPortfolioStatus("idle"); setStatus("idle"); setError(""); }}
           onSubmit={runAnalysis}
         /><select aria-label="资产类型" value={kind} onChange={(event) => { setKind(event.target.value as AssetKind); setSelectedAsset(null); }}><option value="auto">全部类型</option><option value="fund">基金</option><option value="stock">股票</option><option value="index">指数</option></select></div>
         <div className={`recognition recognition-${status}`}><span>{selectedAsset || status === "success" ? "✓" : "⌕"}</span>{status === "loading" ? "正在拉取标的与基准…" : selectedAsset ? `已选择 · ${selectedAsset.kindLabel}，可继续搜索更换` : "输入名称、代码或简称，可随时更换标的"}</div>
         <h2>{asset.name}</h2><p className="asset-meta">{asset.kindLabel} <b>·</b> {asset.code}</p>
-      </div>
-      <div className="control-column period-column">
-        <label className="field-label">分析区间</label>
-        <div className="date-row"><input aria-label="开始日期" type="date" value={start} onChange={(event) => setStart(event.target.value)}/><span>~</span><input aria-label="结束日期" type="date" value={end} onChange={(event) => setEnd(event.target.value)}/></div>
-        <div className="quick-ranges"><button onClick={() => chooseRange(1)}>近1月</button><button onClick={() => chooseRange(3)}>近3月</button><button onClick={() => chooseRange(6)}>近6月</button><button onClick={() => chooseRange("ytd")}>今年以来</button><button onClick={() => chooseRange(12)}>近1年</button><button onClick={() => chooseRange(36)}>近3年</button><button onClick={() => chooseRange("all")}>成立以来</button></div>
       </div>
       <div className="control-column metric-column">
         <div className="metric-heading"><label className="field-label">选择指标 <em>{metricDefinitions.length}项</em></label><button className="text-button" onClick={() => setShowMore((value) => !value)}>{showMore ? "收起" : "查看全部指标"}</button></div>
@@ -282,12 +310,21 @@ export default function Home() {
       </div>
     </section>
 
+    {(selectedAsset?.kind === "fund" || (asset.kind === "fund" && asset.code !== "DEMO")) && <section className="portfolio-panel" aria-label="基金持仓画像">
+      <div className="portfolio-header"><div><h2>基金持仓画像</h2><p>{portfolio?.reportDate ? `${portfolio.reportDate} 定期报告` : "根据基金最新公开定期报告整理"}</p></div><span>{portfolio?.source ?? "天天基金公开持仓"}</span></div>
+      {portfolioStatus === "loading" && <div className="portfolio-loading"><i className="spinner"/>正在读取资产与行业配置…</div>}
+      {portfolioStatus === "error" && <div className="portfolio-empty">暂未取得该基金的公开持仓配置，净值分析仍可正常使用。</div>}
+      {portfolio && <div className="portfolio-content"><div className="allocation-card"><h3>大类资产占比</h3><div className="allocation-bar">{([['stock', '#315cf4'], ['bond', '#e69b36'], ['cash', '#45a67d'], ['other', '#b7c0ce']] as const).map(([key, color]) => { const value = portfolio.allocation[key] ?? 0; return value > 0 ? <span key={key} style={{ width: `${Math.min(100, value)}%`, background: color }}/> : null; })}</div><div className="allocation-legend">{([['stock', '权益', '#315cf4'], ['bond', '债券', '#e69b36'], ['cash', '现金', '#45a67d'], ['other', '其他', '#b7c0ce']] as const).map(([key, label, color]) => <div key={key}><i style={{ background: color }}/><span>{label}</span><strong>{portfolio.allocation[key] == null ? "—" : `${portfolio.allocation[key]!.toFixed(1)}%`}</strong></div>)}</div></div>
+        <div className="industry-card"><h3>核心行业占比</h3>{portfolio.industries.length ? <div className="industry-list">{portfolio.industries.map((item) => <div key={item.name}><span>{item.name}</span><div><i style={{ width: `${Math.min(100, item.percent)}%` }}/></div><strong>{item.percent.toFixed(1)}%</strong></div>)}</div> : <p className="portfolio-empty">该基金暂未披露行业分类。</p>}</div></div>}
+    </section>}
+
     <section className="benchmark-panel" aria-label="自定义复合基准">
       <div className="benchmark-header"><div><h2>自定义复合基准</h2><p>各成分先计算日收益，再按设定权重每日再平衡合成；支持宽基、行业、债券指数自由搭配。</p></div><div className={`weight-total ${Math.abs(totalWeight - 100) < .01 ? "valid" : "invalid"}`}>权重合计 <strong>{totalWeight.toFixed(0)}%</strong></div></div>
       <div className="benchmark-content">
         <div className="benchmark-rows">{benchmarks.map((item, index) => <div className="benchmark-row" key={item.id}>
           <span className="benchmark-number">{index + 1}</span><AssetSearchInput compact value={item.query} kind={item.kind} selected={item.asset}
             placeholder="搜索基准成分名称或代码"
+            suggestions={benchmarkCandidates}
             onValueChange={(value) => updateBenchmark(item.id, { query: value, asset: null })}
             onSelect={(candidate) => updateBenchmark(item.id, { query: assetDisplay(candidate), kind: candidate.kind, asset: candidate })}/>
           <select value={item.kind} onChange={(event) => updateBenchmark(item.id, { kind: event.target.value as AssetKind, asset: null })}><option value="auto">全部</option><option value="index">指数</option><option value="fund">基金</option><option value="stock">股票</option></select>
@@ -329,20 +366,8 @@ export default function Home() {
       <div className="rolling-chart-card"><div className="rolling-legend"><strong>滚动收益轨迹</strong>{rollingHorizonDefinitions.filter((item) => selectedRolling.includes(item.id)).map((item) => <span key={item.id} className={`rolling-legend-${item.id}`}>{item.label}</span>)}</div><RollingReturnChart rolling={rolling} selected={selectedRolling} settings={chartSettings}/><p>曲线位于0%以上代表对应持有期取得正收益；胜率为所有有效滚动窗口中正收益窗口的占比。</p></div>
     </section>
 
-    <section className="image-toolbar chart-settings-panel">
-      <div className="chart-title-control"><label>图表标题 <input value={chartTitle} onChange={(event) => setChartTitle(event.target.value)} maxLength={42}/></label><p>下载图片会自动附带区间、基准配比、数据来源和风险提示。</p></div>
-      <div className="chart-settings">
-        <label>配色<select value={chartSettings.theme} onChange={(event) => setChartSettings((value) => ({ ...value, theme: event.target.value as ChartTheme }))}>{Object.entries(chartThemeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <label>线宽<select value={chartSettings.lineWidth} onChange={(event) => setChartSettings((value) => ({ ...value, lineWidth: event.target.value as ChartLineWidth }))}><option value="fine">纤细</option><option value="standard">标准</option><option value="bold">醒目</option></select></label>
-        <label className="setting-check"><input type="checkbox" checked={chartSettings.showBenchmark} onChange={(event) => setChartSettings((value) => ({ ...value, showBenchmark: event.target.checked }))}/>基准线</label>
-        <label className="setting-check"><input type="checkbox" checked={chartSettings.showGrid} onChange={(event) => setChartSettings((value) => ({ ...value, showGrid: event.target.checked }))}/>网格</label>
-        <label className="setting-check"><input type="checkbox" checked={chartSettings.showArea} onChange={(event) => setChartSettings((value) => ({ ...value, showArea: event.target.checked }))}/>渐变填充</label>
-      </div>
-      <button onClick={exportPng}>下载高清PNG</button>
-    </section>
-
-    <details className="copy-editor" open>
-      <summary>编辑表格与来源文案 <span>修改后立即应用到页面，数据计算结果不会改变</span></summary>
+    <details className="copy-editor">
+      <summary>可选：编辑报告表头与来源 <span>默认收起，不影响图表分析</span></summary>
       <div className="copy-editor-grid">
         <label className="copy-editor-wide">数据来源文字<input value={customSourceText} onChange={(event) => setCustomSourceText(event.target.value)} placeholder={`数据来源：${sourceLabel}`} maxLength={120}/></label>
         <label>基准表标题<input value={benchmarkTableTitle} onChange={(event) => setBenchmarkTableTitle(event.target.value)} maxLength={36}/></label>
@@ -354,17 +379,17 @@ export default function Home() {
       <button className="reset-copy" type="button" onClick={() => { setCustomSourceText(""); setBenchmarkTableTitle("标的与复合基准指标对比"); setBenchmarkHeaders(["指标", "", "复合基准", "相对表现"]); setPeerTableTitle("同类标的横向对比"); setPeerTableSubtitle("同一区间、同一计算口径；滚动胜率按各标的自身有效交易日计算。"); setPeerHeaders(["标的", "区间收益", "年化收益", "最大回撤", "年化波动", "夏普", "季度胜率", "半年胜率", "年度胜率"]); }}>恢复默认文案</button>
     </details>
 
-    <section className={`charts-grid ${status === "loading" ? "is-loading" : ""}`}>
-      <article className="chart-card performance-card">
-        <div className="chart-report-header"><div><h3>{chartTitle}</h3><p>{asset.name}（{asset.code}）｜{series[0].date}—{series.at(-1)!.date}</p></div><div className="legend"><span className="legend-blue"/>{asset.name}{chartSettings.showBenchmark && <><span className="legend-orange"/>自定义复合基准</>}{resolvedPeers.map((peer, index) => <span className="peer-legend" key={peer.id}><i className={`peer-swatch peer-swatch-${index % 4}`}/>{peer.asset.name}</span>)}</div></div>
-        <div className="chart-wrap"><ReportPerformanceChart primary={series} benchmark={benchmarkSeries} peers={resolvedPeers.map((peer) => ({ label: peer.asset.name, series: peer.series }))} primaryLabel={asset.name} benchmarkLabel="复合基准" settings={chartSettings}/></div>
-        <div className="figure-source">{sourceCaption}；复合基准：{benchmarkLabel || "未设置"}。观点及测算仅供参考，不构成投资建议。</div>
-      </article>
-      <article className="chart-card drawdown-card">
-        <div className="chart-report-header"><div><h3>区间回撤与修复</h3><p>前高：{analysis.dates.peak}｜谷底：{analysis.dates.trough}｜{analysis.dates.recovered ? `修复：${analysis.dates.recovered}` : "尚未修复"}</p></div><div className="drawdown-summary">标的 <strong>{formatMetric("drawdown", analysis.values.drawdown)}</strong></div></div>
-        <div className="chart-wrap"><ReportDrawdownChart primary={analysis.drawdowns} benchmark={analysis.benchmark?.drawdowns} settings={chartSettings}/></div>
-        <div className="figure-source">{sourceCaption}；最大回撤按历史峰值至后续低点计算，修复以重新达到前高为准。</div>
-      </article>
+    <section className={`interactive-chart-panel ${status === "loading" ? "is-loading" : ""}`} aria-label="可交互指标图表">
+      <div className="chart-report-header"><div><h3>{chartDefinition.label}</h3><p>{asset.name}（{asset.code}）｜{series[0].date}—{series.at(-1)!.date}</p></div><div className="chart-actions"><div className="legend"><span className="legend-blue"/>{asset.name}{benchmarkSeries.length ? <><span className="legend-orange"/>复合基准</> : null}</div><button onClick={exportPng}>下载高清PNG</button></div></div>
+      <div className="chart-wrap"><MetricTrendChart primary={chartPrimary} benchmark={chartBenchmark} primaryLabel={asset.name} benchmarkLabel="复合基准" percent={chartDefinition.percent} settings={chartSettings}/></div>
+      <div className="chart-controls">
+        <div className="chart-date-control"><strong>图表区间</strong><input aria-label="图表开始日期" type="date" value={start} onChange={(event) => setStart(event.target.value)}/><span>—</span><input aria-label="图表结束日期" type="date" value={end} onChange={(event) => setEnd(event.target.value)}/><button className="apply-chart-range" onClick={runAnalysis} disabled={status === "loading"}>更新图表</button></div>
+        <div className="chart-quick-ranges"><button onClick={() => chooseRange(3)}>近3月</button><button onClick={() => chooseRange(6)}>近6月</button><button onClick={() => chooseRange("ytd")}>今年以来</button><button onClick={() => chooseRange(12)}>近1年</button><button onClick={() => chooseRange(36)}>近3年</button><button onClick={() => chooseRange("all")}>成立以来</button></div>
+        <div className="chart-metric-switcher"><strong>切换指标</strong>{chartMetricDefinitions.map((item) => <button key={item.id} className={chartMetric === item.id ? "active" : ""} onClick={() => setChartMetric(item.id)}>{item.short}</button>)}</div>
+        {chartMetric.startsWith("rolling") && <div className="rolling-window-switcher"><strong>滚动窗口</strong>{[[63, "季度"], [126, "半年"], [252, "一年"]].map(([value, label]) => <button key={value} className={rollingWindow === value ? "active" : ""} onClick={() => setRollingWindow(Number(value))}>{label}</button>)}</div>}
+        <div className="compact-chart-settings"><label>配色<select value={chartSettings.theme} onChange={(event) => setChartSettings((value) => ({ ...value, theme: event.target.value as ChartTheme }))}>{Object.entries(chartThemeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>线宽<select value={chartSettings.lineWidth} onChange={(event) => setChartSettings((value) => ({ ...value, lineWidth: event.target.value as ChartLineWidth }))}><option value="fine">纤细</option><option value="standard">标准</option><option value="bold">醒目</option></select></label><label className="setting-check"><input type="checkbox" checked={chartSettings.showBenchmark} onChange={(event) => setChartSettings((value) => ({ ...value, showBenchmark: event.target.checked }))}/>基准线</label><label className="setting-check"><input type="checkbox" checked={chartSettings.showGrid} onChange={(event) => setChartSettings((value) => ({ ...value, showGrid: event.target.checked }))}/>网格</label></div>
+      </div>
+      <div className="figure-source">{sourceCaption}；复合基准：{benchmarkLabel || "未设置"}。滚动指标按所选交易日窗口逐日计算。</div>
     </section>
 
     {analysis.benchmark && <section className="comparison-table"><div className="comparison-heading"><h2>{benchmarkTableTitle}</h2><p>{benchmarkLabel}</p></div><div className="comparison-grid"><div className="comparison-row comparison-header-row">{benchmarkHeaders.map((header, index) => <span key={index}>{header || (index === 1 ? asset.name : "")}</span>)}</div>{(["return", "annualized", "volatility", "drawdown", "sharpe", "calmar"] as MetricId[]).map((id) => { const definition = metricDefinitions.find((item) => item.id === id)!; const assetValue = analysis.values[id]; const benchmarkValue = (analysis.benchmark!.values as Record<string, number | null>)[id]; const difference = assetValue != null && benchmarkValue != null ? assetValue - benchmarkValue : null; return <div className="comparison-row" key={id}><strong>{definition.label}</strong><span>{formatMetric(id, assetValue)}</span><span>{formatMetric(id, benchmarkValue)}</span><span className={difference != null && difference >= 0 ? "positive" : "negative"}>{difference == null ? "—" : formatMetric(id, difference)}</span></div>; })}</div></section>}
