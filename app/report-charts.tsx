@@ -70,6 +70,41 @@ export function PerformanceChart({ primary, benchmark, peers, primaryLabel, benc
   </svg>;
 }
 
+export function MetricTrendChart({ primary, benchmark, primaryLabel, benchmarkLabel, percent, settings }: {
+  primary: PricePoint[];
+  benchmark: PricePoint[];
+  primaryLabel: string;
+  benchmarkLabel: string;
+  percent: boolean;
+  settings: ChartSettings;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
+  if (!primary.length) return <div className="chart-empty">当前区间不足以计算该滚动指标，请扩大日期范围或缩短滚动窗口。</div>;
+  const benchmarkMap = new Map(benchmark.map((point) => [point.date, point.value]));
+  const benchmarkAligned = primary.flatMap((point) => benchmarkMap.has(point.date) ? [{ date: point.date, value: benchmarkMap.get(point.date)! }] : []);
+  const allValues = [...primary, ...benchmarkAligned].map((point) => point.value);
+  const rawMin = Math.min(...allValues, 0), rawMax = Math.max(...allValues, 0);
+  const padding = Math.max(.01, (rawMax - rawMin) * .08), min = rawMin - padding, max = rawMax + padding;
+  const width = 1040, height = 420, left = 64, right = 24, top = 26, bottom = 46;
+  const x = (index: number) => left + (index / Math.max(1, primary.length - 1)) * (width - left - right);
+  const y = (value: number) => top + ((max - value) / Math.max(.0001, max - min)) * (height - top - bottom);
+  const points = (items: { value: number }[]) => items.map((point, index) => `${x(index)},${y(point.value)}`).join(" ");
+  const ticks = Array.from({ length: 6 }, (_, index) => Math.round((index / 5) * (primary.length - 1)));
+  const lineWidth = widthValue[settings.lineWidth];
+  const display = (value: number) => percent ? `${(value * 100).toFixed(2)}%` : value.toFixed(2);
+  return <svg className={`chart chart-theme-${settings.theme}`} viewBox={`0 0 ${width} ${height}`} role="img" aria-label="可切换指标趋势图"
+    onPointerMove={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setHover(Math.max(0, Math.min(primary.length - 1, Math.round(((event.clientX - rect.left) / rect.width) * (primary.length - 1))))); }} onPointerLeave={() => setHover(null)}>
+    {[0, 1, 2, 3, 4].map((tick) => { const value = max - (tick / 4) * (max - min); return <g key={tick}>{settings.showGrid && <line x1={left} x2={width - right} y1={y(value)} y2={y(value)} className="grid-line"/>}<text x={left - 11} y={y(value) + 4} className="axis-label" textAnchor="end">{percent ? `${(value * 100).toFixed(0)}%` : value.toFixed(1)}</text></g>; })}
+    <line x1={left} x2={width - right} y1={y(0)} y2={y(0)} className="zero-line"/>
+    {ticks.map((index) => <text key={index} x={x(index)} y={height - 12} className="axis-label" textAnchor="middle">{primary[index]?.date.slice(0, 7)}</text>)}
+    {settings.showBenchmark && benchmarkAligned.length === primary.length && <polyline className="benchmark-line" style={{ strokeWidth: lineWidth }} points={points(benchmarkAligned)}/>}
+    <polyline className="performance-line" style={{ strokeWidth: lineWidth }} points={points(primary)}/>
+    {hover != null && primary[hover] && <g><line x1={x(hover)} x2={x(hover)} y1={top} y2={height - bottom} className="hover-line"/><circle cx={x(hover)} cy={y(primary[hover].value)} r="5" className="hover-dot"/>
+      <g transform={`translate(${Math.min(width - 238, Math.max(left, x(hover) - 108))}, ${Math.max(8, y(primary[hover].value) - 82)})`}><rect width="220" height={benchmarkAligned[hover] ? 68 : 50} rx="8" className="tooltip-bg"/><text x="12" y="19" className="tooltip-date">{primary[hover].date}</text><text x="12" y="39" className="tooltip-value">{primaryLabel} {display(primary[hover].value)}</text>{benchmarkAligned[hover] && <text x="12" y="58" className="tooltip-benchmark">{benchmarkLabel} {display(benchmarkAligned[hover].value)}</text>}</g>
+    </g>}
+  </svg>;
+}
+
 export function DrawdownChart({ primary, benchmark, settings }: {
   primary: { date: string; value: number }[];
   benchmark?: { date: string; value: number }[];

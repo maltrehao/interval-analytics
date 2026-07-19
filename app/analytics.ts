@@ -1,4 +1,5 @@
 export type PricePoint = { date: string; value: number };
+export type ChartMetric = "return" | "drawdown" | "rollingReturn" | "rollingVolatility" | "rollingSharpe" | "rollingDrawdown";
 
 export type MetricId =
   | "return" | "annualized" | "drawdown" | "recovery"
@@ -92,6 +93,35 @@ function variance(values: number[]) {
 }
 
 function standardDeviation(values: number[]) { return Math.sqrt(variance(values)); }
+
+function maxDrawdownValue(series: PricePoint[]) {
+  let peak = series[0]?.value ?? 1;
+  let result = 0;
+  series.forEach((point) => { peak = Math.max(peak, point.value); result = Math.min(result, point.value / peak - 1); });
+  return result;
+}
+
+export function buildChartMetricSeries(series: PricePoint[], metric: ChartMetric, window: number, riskFreeRate: number) {
+  if (!series.length) return [];
+  if (metric === "return") return series.map((point) => ({ date: point.date, value: point.value / series[0].value - 1 }));
+  if (metric === "drawdown") {
+    let peak = series[0].value;
+    return series.map((point) => { peak = Math.max(peak, point.value); return { date: point.date, value: point.value / peak - 1 }; });
+  }
+  const dailyRf = Math.pow(1 + riskFreeRate, 1 / 252) - 1;
+  return series.flatMap((point, index) => {
+    if (index < window) return [];
+    const slice = series.slice(index - window, index + 1);
+    const returns = slice.slice(1).map((item, offset) => item.value / slice[offset].value - 1);
+    if (metric === "rollingReturn") return [{ date: point.date, value: point.value / slice[0].value - 1 }];
+    if (metric === "rollingVolatility") return [{ date: point.date, value: standardDeviation(returns) * Math.sqrt(252) }];
+    if (metric === "rollingSharpe") {
+      const volatility = standardDeviation(returns);
+      return [{ date: point.date, value: volatility ? ((mean(returns) - dailyRf) / volatility) * Math.sqrt(252) : 0 }];
+    }
+    return [{ date: point.date, value: maxDrawdownValue(slice) }];
+  });
+}
 
 function covariance(left: number[], right: number[]) {
   const length = Math.min(left.length, right.length);

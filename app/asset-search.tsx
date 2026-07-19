@@ -17,6 +17,8 @@ export function assetDisplay(asset: AssetCandidate) {
   return `${asset.name}（${asset.code}）`;
 }
 
+const EMPTY_SUGGESTIONS: AssetCandidate[] = [];
+
 type Props = {
   value: string;
   kind: AssetKind;
@@ -26,10 +28,11 @@ type Props = {
   onSelect(asset: AssetCandidate): void;
   onSubmit?(): void;
   compact?: boolean;
+  suggestions?: AssetCandidate[];
 };
 
 export function AssetSearchInput({
-  value, kind, selected, placeholder, onValueChange, onSelect, onSubmit, compact = false,
+  value, kind, selected, placeholder, onValueChange, onSelect, onSubmit, compact = false, suggestions = EMPTY_SUGGESTIONS,
 }: Props) {
   const listId = useId();
   const requestId = useRef(0);
@@ -43,8 +46,8 @@ export function AssetSearchInput({
     const query = value.trim();
     if (!query || (selected && query === assetDisplay(selected))) {
       const resetTimer = window.setTimeout(() => {
-        setResults([]);
-        setOpen(false);
+        setResults(!query ? suggestions : []);
+        setOpen(!query && focused.current && suggestions.length > 0);
         setLoading(false);
         setMessage("");
       }, 0);
@@ -77,7 +80,7 @@ export function AssetSearchInput({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [kind, selected, value]);
+  }, [kind, selected, suggestions, value]);
 
   const choose = (asset: AssetCandidate) => {
     requestId.current += 1;
@@ -91,7 +94,7 @@ export function AssetSearchInput({
     <input
       value={value}
       onChange={(event) => onValueChange(event.target.value)}
-      onFocus={() => { focused.current = true; if (results.length || message) setOpen(true); }}
+      onFocus={() => { focused.current = true; if (results.length || suggestions.length || message) { if (!value.trim() && suggestions.length) setResults(suggestions); setOpen(true); } }}
       onBlur={() => { focused.current = false; window.setTimeout(() => setOpen(false), 150); }}
       onKeyDown={(event) => {
         if (event.key !== "Enter") return;
