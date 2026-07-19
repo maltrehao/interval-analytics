@@ -2,7 +2,7 @@
 
 一个面向基金、A股与指数的开源区间绩效分析工具。输入代码或名称、设置任意日期，即可计算收益与风险指标，构建自定义复合基准，并导出可直接放入 PPT 的高清分析图。
 
-在线体验：[interval-analytics.c15020028216.chatgpt.site](https://interval-analytics.c15020028216.chatgpt.site)
+在线体验：[interval-analytics-dpb20sk9b938.edgeone.cool](https://interval-analytics-dpb20sk9b938.edgeone.cool)
 
 ## 功能
 
